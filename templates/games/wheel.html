@@ -1,0 +1,379 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block content %}
+<h2 class="text-center">🎡 Spin the Wheel</h2>
+
+<!-- Hidden values for JavaScript -->
+<input type="hidden" id="isDemo" value="{{ request.session.demo_mode|yesno:'true,false' }}">
+<input type="hidden" id="liveBalance" value="{{ user.wallet.balance }}">
+<input type="hidden" id="demoBalance" value="{{ request.session.demo_balance }}">
+
+<!-- Mode Toggle -->
+<div class="text-center mb-3">
+    <span class="badge bg-{% if request.session.demo_mode %}warning{% else %}success{% endif %}">
+        {% if request.session.demo_mode %}🔵 Demo Mode{% else %}🔴 Live Mode{% endif %}
+    </span>
+    <form action="{% url 'games:toggle_demo' %}" method="post" style="display:inline;">
+        {% csrf_token %}
+        <button type="submit" class="btn btn-sm btn-outline-secondary">
+            Switch to {% if request.session.demo_mode %}Live{% else %}Demo{% endif %}
+        </button>
+    </form>
+    <p class="mt-1 small">
+        {% if request.session.demo_mode %}
+            🎯 Demo balance: <strong id="balance">{{ request.session.demo_balance }}</strong> (virtual)
+        {% else %}
+            💰 Real balance: <strong id="balance">{{ user.wallet.balance }}</strong> KES
+        {% endif %}
+    </p>
+</div>
+
+<div class="text-center">
+    <canvas id="wheelCanvas" width="400" height="400"></canvas>
+</div>
+
+<div class="text-center mt-3">
+    <label for="betAmount">Bet Amount (KES):</label>
+    <input type="number" id="betAmount" step="0.01" min="0.01" value="1.00" class="form-control d-inline-block" style="width:150px; display:inline;">
+    <button id="spinBtn" class="btn btn-primary">Spin!</button>
+</div>
+<p id="result" class="text-center mt-2"></p>
+
+<!-- WIN MODAL -->
+<div class="modal fade" id="winModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content bg-success text-white" style="border: 5px solid gold; border-radius: 20px;">
+            <div class="modal-body text-center py-5">
+                <div style="font-size: 80px;">🎉</div>
+                <h1 class="display-1 fw-bold">WINNER!</h1>
+                <h2 class="display-4" id="winAmountDisplay">+0.00 KES</h2>
+                <p class="lead" id="winMultiplierDisplay">Multiplier: 0x</p>
+                <button type="button" class="btn btn-light btn-lg mt-3" data-bs-dismiss="modal">Awesome!</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- INSUFFICIENT BALANCE MODAL -->
+<div class="modal fade" id="insufficientModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content bg-warning text-dark">
+            <div class="modal-body text-center py-4">
+                <div style="font-size: 60px;">💰</div>
+                <h3>Balance is 0 KES</h3>
+                <p>You need to deposit before playing in Live Mode.</p>
+                <a href="{% url 'payments:deposit' %}" class="btn btn-success btn-lg mt-2">Deposit Now</a>
+                <button type="button" class="btn btn-outline-secondary mt-2" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // ========== AUDIO HELPERS ==========
+    let audioCtx = null;
+
+    function getAudioContext() {
+        if (!audioCtx) {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        return audioCtx;
+    }
+
+    // Spinning sound (ticking noise)
+    let spinInterval = null;
+
+    function playSpinSound(duration) {
+        const ctx = getAudioContext();
+        stopSpinSound();
+
+        const bufferSize = ctx.sampleRate * 0.05;
+        const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+        const data = buffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) {
+            data[i] = (Math.random() * 2 - 1) * 0.3;
+        }
+
+        let elapsed = 0;
+        let interval = 0.15;
+
+        function scheduleTick() {
+            if (elapsed >= duration) {
+                playDing();
+                return;
+            }
+
+            const source = ctx.createBufferSource();
+            source.buffer = buffer;
+            const gain = ctx.createGain();
+            gain.gain.setValueAtTime(0.4, ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.05);
+            source.connect(gain);
+            gain.connect(ctx.destination);
+            source.start(ctx.currentTime);
+
+            const progress = elapsed / duration;
+            const newInterval = 0.15 - progress * 0.13;
+            interval = Math.max(newInterval, 0.02);
+
+            elapsed += interval;
+            const timeoutId = setTimeout(scheduleTick, interval * 1000);
+            spinInterval = timeoutId;
+        }
+
+        scheduleTick();
+    }
+
+    function stopSpinSound() {
+        if (spinInterval) {
+            clearTimeout(spinInterval);
+            spinInterval = null;
+        }
+    }
+
+    function playDing() {
+        try {
+            const ctx = getAudioContext();
+            const notes = [880, 1108.73, 1318.51];
+            notes.forEach((freq, i) => {
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.type = 'sine';
+                osc.frequency.value = freq;
+                gain.gain.setValueAtTime(0.2, ctx.currentTime + i * 0.08);
+                gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + i * 0.08 + 0.15);
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                osc.start(ctx.currentTime + i * 0.08);
+                osc.stop(ctx.currentTime + i * 0.08 + 0.15);
+            });
+        } catch(e) { /* ignore */ }
+    }
+
+    // ========== CONFETTI ==========
+    const confettiCanvas = document.createElement('canvas');
+    confettiCanvas.id = 'confettiCanvas';
+    confettiCanvas.style.position = 'absolute';
+    confettiCanvas.style.top = '0';
+    confettiCanvas.style.left = '0';
+    confettiCanvas.style.width = '100%';
+    confettiCanvas.style.height = '100%';
+    confettiCanvas.style.pointerEvents = 'none';
+    document.querySelector('.container').style.position = 'relative';
+    document.querySelector('.container').appendChild(confettiCanvas);
+    const cCtx = confettiCanvas.getContext('2d');
+    let confettiPieces = [];
+    let confettiAnimId = null;
+
+    function resizeConfettiCanvas() {
+        confettiCanvas.width = confettiCanvas.offsetWidth;
+        confettiCanvas.height = confettiCanvas.offsetHeight;
+    }
+    window.addEventListener('resize', resizeConfettiCanvas);
+    setTimeout(resizeConfettiCanvas, 100);
+
+    function fireConfetti(count = 80) {
+        const colors = ['#f44336', '#e91e63', '#9c27b0', '#3f51b5', '#4caf50', '#ffeb3b', '#ff9800', '#00bcd4', '#8bc34a', '#ff5722'];
+        for (let i = 0; i < count; i++) {
+            confettiPieces.push({
+                x: Math.random() * confettiCanvas.width,
+                y: -10 - Math.random() * 100,
+                w: 6 + Math.random() * 8,
+                h: 6 + Math.random() * 8,
+                color: colors[Math.floor(Math.random() * colors.length)],
+                vx: (Math.random() - 0.5) * 5,
+                vy: 2 + Math.random() * 4,
+                rot: 0,
+                rotSpeed: (Math.random() - 0.5) * 0.2,
+                life: 1.0,
+                decay: 0.005 + Math.random() * 0.01,
+            });
+        }
+        if (confettiAnimId) cancelAnimationFrame(confettiAnimId);
+        animateConfetti();
+    }
+
+    function animateConfetti() {
+        cCtx.clearRect(0, 0, confettiCanvas.width, confettiCanvas.height);
+        let alive = false;
+        for (let p of confettiPieces) {
+            p.x += p.vx;
+            p.y += p.vy;
+            p.vy += 0.05;
+            p.rot += p.rotSpeed;
+            p.life -= p.decay;
+            if (p.life <= 0) continue;
+            alive = true;
+            cCtx.save();
+            cCtx.translate(p.x, p.y);
+            cCtx.rotate(p.rot);
+            cCtx.globalAlpha = p.life;
+            cCtx.fillStyle = p.color;
+            cCtx.fillRect(-p.w/2, -p.h/2, p.w, p.h);
+            cCtx.restore();
+        }
+        if (alive) {
+            confettiAnimId = requestAnimationFrame(animateConfetti);
+        } else {
+            confettiPieces = [];
+            cCtx.clearRect(0, 0, confettiCanvas.width, confettiCanvas.height);
+            confettiAnimId = null;
+        }
+    }
+
+    // ========== WHEEL DRAWING ==========
+    const segments = [
+        { label: '0x', color: '#FF4136' },
+        { label: '0.5x', color: '#FF851B' },
+        { label: '1x', color: '#FFDC00' },
+        { label: '1.5x', color: '#01FF70' },
+        { label: '2x', color: '#2ECC40' },
+        { label: '3x', color: '#0074D9' },
+        { label: '5x', color: '#B10DC9' },
+        { label: '10x', color: '#F012BE' },
+        { label: '50x', color: '#FF6B6B' },
+    ];
+    const canvas = document.getElementById('wheelCanvas');
+    const ctx = canvas.getContext('2d');
+    const centerX = 200, centerY = 200, radius = 180;
+    const numSegments = segments.length;
+    const angleStep = (2 * Math.PI) / numSegments;
+    let currentAngle = 0;
+
+    function drawWheel(rotation) {
+        ctx.clearRect(0, 0, 400, 400);
+        for (let i = 0; i < numSegments; i++) {
+            const startAngle = i * angleStep + rotation;
+            const endAngle = startAngle + angleStep;
+            ctx.beginPath();
+            ctx.moveTo(centerX, centerY);
+            ctx.arc(centerX, centerY, radius, startAngle, endAngle);
+            ctx.closePath();
+            ctx.fillStyle = segments[i].color;
+            ctx.fill();
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            const textAngle = startAngle + angleStep / 2;
+            const textX = centerX + (radius * 0.6) * Math.cos(textAngle);
+            const textY = centerY + (radius * 0.6) * Math.sin(textAngle);
+            ctx.fillStyle = '#fff';
+            ctx.font = 'bold 14px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(segments[i].label, textX, textY);
+        }
+        ctx.beginPath();
+        ctx.moveTo(380, 200);
+        ctx.lineTo(400, 190);
+        ctx.lineTo(400, 210);
+        ctx.closePath();
+        ctx.fillStyle = '#000';
+        ctx.fill();
+    }
+
+    let rotation = 0;
+    drawWheel(0);
+
+    // ========== SPIN LOGIC ==========
+    document.getElementById('spinBtn').addEventListener('click', function() {
+        // Check balance first
+        const isDemo = document.getElementById('isDemo').value === 'true';
+        let balance;
+        if (isDemo) {
+            balance = parseFloat(document.getElementById('demoBalance').value) || 0;
+        } else {
+            balance = parseFloat(document.getElementById('liveBalance').value) || 0;
+        }
+
+        // If live mode and balance is 0, show deposit modal
+        if (!isDemo && balance <= 0) {
+            var insufficientModal = new bootstrap.Modal(document.getElementById('insufficientModal'));
+            insufficientModal.show();
+            return;
+        }
+
+        const bet = document.getElementById('betAmount').value;
+        if (!bet || parseFloat(bet) <= 0) {
+            alert('Enter a valid bet amount.');
+            return;
+        }
+
+        // If bet > balance, alert and stop
+        if (parseFloat(bet) > balance) {
+            alert('You cannot bet more than your balance.');
+            return;
+        }
+
+        this.disabled = true;
+        document.getElementById('result').innerText = 'Spinning...';
+
+        const spinDuration = 3000;
+        const rotations = 5;
+        const targetRotation = rotation + rotations * 2 * Math.PI + (Math.random() * 2 * Math.PI);
+        const startRotation = rotation;
+        const startTime = Date.now();
+
+        playSpinSound(spinDuration / 1000 + 0.5);
+
+        function animateSpin() {
+            const elapsed = Date.now() - startTime;
+            const progress = Math.min(elapsed / spinDuration, 1);
+            const eased = 1 - Math.pow(1 - progress, 3);
+            const current = startRotation + (targetRotation - startRotation) * eased;
+            rotation = current;
+            drawWheel(current);
+            if (progress < 1) {
+                requestAnimationFrame(animateSpin);
+            } else {
+                setTimeout(() => {
+                    stopSpinSound();
+                }, 200);
+
+                fetch('/games/spin/', {
+                    method: 'POST',
+                    headers: {
+                        'X-CSRFToken': '{{ csrf_token }}',
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                    body: 'bet_amount=' + encodeURIComponent(bet)
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        alert(data.error);
+                    } else {
+                        // Update balance display
+                        document.getElementById('balance').innerText = data.new_balance;
+                        // Update hidden balance inputs
+                        if (data.is_demo) {
+                            document.getElementById('demoBalance').value = data.new_balance;
+                        } else {
+                            document.getElementById('liveBalance').value = data.new_balance;
+                        }
+                        const win = data.win_amount;
+                        document.getElementById('result').innerHTML = 'Multiplier: ' + data.multiplier + 'x, You won: ' + win + ' KES' + (data.is_demo ? ' (Demo)' : '');
+                        if (win > 0) {
+                            playDing();
+                            fireConfetti(150);
+                            // Show win modal
+                            document.getElementById('winAmountDisplay').innerText = '+' + win + ' KES';
+                            document.getElementById('winMultiplierDisplay').innerText = 'Multiplier: ' + data.multiplier + 'x';
+                            var myModal = new bootstrap.Modal(document.getElementById('winModal'), {
+                                backdrop: 'static',
+                                keyboard: false
+                            });
+                            myModal.show();
+                        }
+                    }
+                })
+                .catch(error => alert('Error: ' + error))
+                .finally(() => {
+                    document.getElementById('spinBtn').disabled = false;
+                });
+            }
+        }
+        animateSpin();
+    });
+</script>
+{% endblock %}

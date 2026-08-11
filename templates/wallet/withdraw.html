@@ -1,0 +1,14 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>Withdraw Funds</h2>
+<p>Minimum withdrawal: 50 KES</p>
+<p>Your balance: {{ user.wallet.balance }} KES</p>
+<form method="post">
+    {% csrf_token %}
+    <div class="mb-3">
+        <label for="amount" class="form-label">Amount (KES)</label>
+        <input type="number" step="0.01" min="50" name="amount" id="amount" class="form-control" required>
+    </div>
+    <button type="submit" class="btn btn-warning">Request Withdrawal</button>
+</form>
+{% endblock %}

@@ -1,0 +1,23 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>My Wallet</h2>
+<p><strong>Balance:</strong> {{ wallet.balance }} {{ wallet.currency }}</p>
+<a href="{% url 'payments:deposit' %}" class="btn btn-success">Deposit</a>
+<a href="{% url 'payments:withdraw' %}" class="btn btn-warning">Withdraw</a>
+<h3>Recent Transactions</h3>
+<table class="table table-striped">
+    <thead><tr><th>Type</th><th>Amount (KES)</th><th>Description</th><th>Date</th></tr></thead>
+    <tbody>
+    {% for txn in transactions %}
+        <tr>
+            <td>{{ txn.get_transaction_type_display }}</td>
+            <td>{{ txn.amount }}</td>
+            <td>{{ txn.description }}</td>
+            <td>{{ txn.created_at }}</td>
+        </tr>
+    {% empty %}
+        <tr><td colspan="4">No transactions yet.</td></tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% endblock %}
