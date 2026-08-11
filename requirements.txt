@@ -1,14 +1,3 @@
-<<<<<<< HEAD
-Django==4.2.11
-djangorestframework==3.14.0
-python-dotenv==1.0.0
-requests==2.31.0
-psycopg2-binary==2.9.9
-celery==5.3.6
-redis==5.0.1
-django-cors-headers==4.3.1
-gunicorn==21.2.0
-=======
 Django==4.2.11
 djangorestframework==3.14.0
 python-dotenv==1.0.0
@@ -18,4 +7,3 @@ gunicorn==21.2.0
 django-cors-headers==4.3.1
 celery==5.3.6
 redis==5.0.1
->>>>>>> f190f21 (Complete betting site with wheel, phone+pin auth, Paystack, admin forced outcomes, and demo sequence)
