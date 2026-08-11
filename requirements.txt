@@ -1,0 +1,8 @@
+Django==4.2.11
+djangorestframework==3.14.0
+python-dotenv==1.0.0
+requests==2.31.0          # Required for Paystack API calls
+psycopg2-binary==2.9.9    # PostgreSQL adapter (optional, use SQLite in dev)
+celery==5.3.6             # Optional – for background tasks
+redis==5.0.1              # Optional – Celery broker
+django-cors-headers==4.3.1  # Optional – if you need CORS
