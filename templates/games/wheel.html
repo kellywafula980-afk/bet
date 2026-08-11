@@ -80,7 +80,6 @@
         return audioCtx;
     }
 
-    // Spinning sound (ticking noise)
     let spinInterval = null;
 
     function playSpinSound(duration) {
@@ -263,6 +262,7 @@
             ctx.textBaseline = 'middle';
             ctx.fillText(segments[i].label, textX, textY);
         }
+        // Arrow indicator (points RIGHT – angle 0)
         ctx.beginPath();
         ctx.moveTo(380, 200);
         ctx.lineTo(400, 190);
@@ -272,12 +272,26 @@
         ctx.fill();
     }
 
-    let rotation = 0;
-    drawWheel(0);
+    // Helper: get segment index for a multiplier value
+    function getSegmentIndex(multiplier) {
+        const labels = segments.map(s => parseFloat(s.label));
+        let idx = 0;
+        let minDiff = Infinity;
+        for (let i = 0; i < labels.length; i++) {
+            const diff = Math.abs(labels[i] - multiplier);
+            if (diff < minDiff) {
+                minDiff = diff;
+                idx = i;
+            }
+        }
+        return idx;
+    }
 
     // ========== SPIN LOGIC ==========
+    let spinInProgress = false;
+
     document.getElementById('spinBtn').addEventListener('click', function() {
-        // Check balance first
+        if (spinInProgress) return;
         const isDemo = document.getElementById('isDemo').value === 'true';
         let balance;
         if (isDemo) {
@@ -286,7 +300,6 @@
             balance = parseFloat(document.getElementById('liveBalance').value) || 0;
         }
 
-        // If live mode and balance is 0, show deposit modal
         if (!isDemo && balance <= 0) {
             var insufficientModal = new bootstrap.Modal(document.getElementById('insufficientModal'));
             insufficientModal.show();
@@ -299,81 +312,105 @@
             return;
         }
 
-        // If bet > balance, alert and stop
         if (parseFloat(bet) > balance) {
             alert('You cannot bet more than your balance.');
             return;
         }
 
+        spinInProgress = true;
         this.disabled = true;
         document.getElementById('result').innerText = 'Spinning...';
 
-        const spinDuration = 3000;
-        const rotations = 5;
-        const targetRotation = rotation + rotations * 2 * Math.PI + (Math.random() * 2 * Math.PI);
-        const startRotation = rotation;
-        const startTime = Date.now();
-
-        playSpinSound(spinDuration / 1000 + 0.5);
-
-        function animateSpin() {
-            const elapsed = Date.now() - startTime;
-            const progress = Math.min(elapsed / spinDuration, 1);
-            const eased = 1 - Math.pow(1 - progress, 3);
-            const current = startRotation + (targetRotation - startRotation) * eased;
-            rotation = current;
-            drawWheel(current);
-            if (progress < 1) {
-                requestAnimationFrame(animateSpin);
-            } else {
-                setTimeout(() => {
-                    stopSpinSound();
-                }, 200);
-
-                fetch('/games/spin/', {
-                    method: 'POST',
-                    headers: {
-                        'X-CSRFToken': '{{ csrf_token }}',
-                        'Content-Type': 'application/x-www-form-urlencoded',
-                    },
-                    body: 'bet_amount=' + encodeURIComponent(bet)
-                })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.error) {
-                        alert(data.error);
-                    } else {
-                        // Update balance display
-                        document.getElementById('balance').innerText = data.new_balance;
-                        // Update hidden balance inputs
-                        if (data.is_demo) {
-                            document.getElementById('demoBalance').value = data.new_balance;
-                        } else {
-                            document.getElementById('liveBalance').value = data.new_balance;
-                        }
-                        const win = data.win_amount;
-                        document.getElementById('result').innerHTML = 'Multiplier: ' + data.multiplier + 'x, You won: ' + win + ' KES' + (data.is_demo ? ' (Demo)' : '');
-                        if (win > 0) {
-                            playDing();
-                            fireConfetti(150);
-                            // Show win modal
-                            document.getElementById('winAmountDisplay').innerText = '+' + win + ' KES';
-                            document.getElementById('winMultiplierDisplay').innerText = 'Multiplier: ' + data.multiplier + 'x';
-                            var myModal = new bootstrap.Modal(document.getElementById('winModal'), {
-                                backdrop: 'static',
-                                keyboard: false
-                            });
-                            myModal.show();
-                        }
-                    }
-                })
-                .catch(error => alert('Error: ' + error))
-                .finally(() => {
-                    document.getElementById('spinBtn').disabled = false;
-                });
+        // First, get the result from server
+        fetch('/games/spin/', {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token }}',
+                'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: 'bet_amount=' + encodeURIComponent(bet)
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.error) {
+                alert(data.error);
+                spinInProgress = false;
+                document.getElementById('spinBtn').disabled = false;
+                return;
             }
-        }
-        animateSpin();
+
+            document.getElementById('balance').innerText = data.new_balance;
+            if (data.is_demo) {
+                document.getElementById('demoBalance').value = data.new_balance;
+            } else {
+                document.getElementById('liveBalance').value = data.new_balance;
+            }
+
+            const win = data.win_amount;
+            const multiplier = data.multiplier;
+            document.getElementById('result').innerHTML = 'Multiplier: ' + multiplier + 'x, You won: ' + win + ' KES' + (data.is_demo ? ' (Demo)' : '');
+
+            // Determine target segment index
+            const targetIdx = getSegmentIndex(multiplier);
+            // The desired absolute rotation for the segment center to be at angle 0 (arrow right)
+            const baseRotation = -(targetIdx * angleStep + angleStep/2);
+            // Current rotation mod 2π
+            const currentOffset = ((currentAngle % (2*Math.PI)) + 2*Math.PI) % (2*Math.PI);
+            // Delta to reach the desired offset from current offset, in the forward direction
+            let delta = (baseRotation - currentOffset) % (2*Math.PI);
+            if (delta < 0) delta += 2*Math.PI;
+            // Add extra full turns (12 turns = 24π)
+            const extraTurns = 12 * 2 * Math.PI;
+            const totalDelta = delta + extraTurns;
+            // Target angle = current angle + totalDelta
+            const targetAngle = currentAngle + totalDelta;
+
+            // Spin duration: 6 seconds
+            const spinDuration = 6000;
+            const startAngle = currentAngle;
+            const startTime = Date.now();
+
+            playSpinSound(spinDuration / 1000 + 0.5);
+
+            function animateSpin() {
+                const elapsed = Date.now() - startTime;
+                const progress = Math.min(elapsed / spinDuration, 1);
+                // Cubic ease-out
+                const eased = 1 - Math.pow(1 - progress, 3);
+                const current = startAngle + (targetAngle - startAngle) * eased;
+                currentAngle = current;
+                drawWheel(current);
+                if (progress < 1) {
+                    requestAnimationFrame(animateSpin);
+                } else {
+                    currentAngle = targetAngle;
+                    drawWheel(targetAngle);
+                    stopSpinSound();
+                    if (win > 0) {
+                        playDing();
+                        fireConfetti(150);
+                        document.getElementById('winAmountDisplay').innerText = '+' + win + ' KES';
+                        document.getElementById('winMultiplierDisplay').innerText = 'Multiplier: ' + multiplier + 'x';
+                        var myModal = new bootstrap.Modal(document.getElementById('winModal'), {
+                            backdrop: 'static',
+                            keyboard: false
+                        });
+                        myModal.show();
+                    }
+                    spinInProgress = false;
+                    document.getElementById('spinBtn').disabled = false;
+                }
+            }
+            animateSpin();
+        })
+        .catch(error => {
+            alert('Error: ' + error);
+            spinInProgress = false;
+            document.getElementById('spinBtn').disabled = false;
+        });
     });
+
+    // Initial draw
+    drawWheel(0);
 </script>
 {% endblock %}

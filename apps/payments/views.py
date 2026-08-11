@@ -8,12 +8,16 @@ from django.urls import reverse
 from .paystack import Paystack
 from apps.wallet.services import WalletService
 
-# Limits in KES
 MIN_DEPOSIT = 20
 MIN_WITHDRAWAL = 50
 
 @login_required
 def deposit(request):
+    # Ensure user has a phone number
+    if not request.user.phone_number:
+        messages.warning(request, "Please update your profile with a phone number first.")
+        return redirect('accounts:profile')
+
     if request.method == 'POST':
         amount = request.POST.get('amount')
         if not amount:
@@ -31,17 +35,28 @@ def deposit(request):
             messages.error(request, f"Minimum deposit is {MIN_DEPOSIT} KES")
             return redirect('payments:deposit')
 
-        # Convert to cents (KES 1 = 100 cents)
+        # Convert to cents
         amount_cents = int(amount * 100)
         reference = f"DEP-{request.user.id}-{uuid.uuid4().hex[:8]}"
-        email = request.user.email
+        email = request.user.email or f"{request.user.phone_number}@user.com"
+
+        # Build metadata with phone number
+        metadata = {
+            'phone': request.user.phone_number,
+            'customer': request.user.phone_number,
+            'custom_fields': [
+                {'display_name': 'Phone', 'variable_name': 'phone', 'value': request.user.phone_number}
+            ]
+        }
 
         response = Paystack.initialize_transaction(
             email=email,
             amount=amount_cents,
             reference=reference,
             callback_url=request.build_absolute_uri(reverse('payments:verify')),
-            currency='KES'
+            currency='KES',
+            channels=['mobile_money', 'card'],
+            metadata=metadata
         )
 
         if response.get('status'):
@@ -49,11 +64,13 @@ def deposit(request):
                 'reference': reference,
                 'amount': str(amount)
             }
+            # Redirect to Paystack payment page
             return redirect(response['data']['authorization_url'])
         else:
             messages.error(request, f"Paystack error: {response.get('message')}")
             return redirect('payments:deposit')
 
+    # GET: show deposit form with quick amounts
     return render(request, 'wallet/deposit.html')
 
 @login_required
@@ -70,7 +87,6 @@ def verify(request):
             messages.info(request, "This deposit has already been processed.")
             return redirect('wallet:wallet_dashboard')
 
-        # Amount from Paystack is in cents; convert back to KES
         amount = Decimal(response['data']['amount']) / 100
         WalletService.credit(request.user, amount, reference, "Paystack deposit")
         messages.success(request, f"Deposit of {amount} KES successful!")

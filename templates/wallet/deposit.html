@@ -2,12 +2,41 @@
 {% block content %}
 <h2>Deposit Funds</h2>
 <p>Minimum deposit: 20 KES</p>
-<form method="post">
+<p>You will be redirected to Paystack to complete your payment via M-Pesa or Card.</p>
+
+<!-- Quick Amount Buttons -->
+<div class="row mb-3">
+    <div class="col-4 col-md-2">
+        <button class="btn btn-outline-primary w-100 quick-amount" data-amount="50">50</button>
+    </div>
+    <div class="col-4 col-md-2">
+        <button class="btn btn-outline-primary w-100 quick-amount" data-amount="100">100</button>
+    </div>
+    <div class="col-4 col-md-2">
+        <button class="btn btn-outline-primary w-100 quick-amount" data-amount="200">200</button>
+    </div>
+    <div class="col-4 col-md-2">
+        <button class="btn btn-outline-primary w-100 quick-amount" data-amount="500">500</button>
+    </div>
+    <div class="col-4 col-md-2">
+        <button class="btn btn-outline-primary w-100 quick-amount" data-amount="1000">1000</button>
+    </div>
+</div>
+
+<form method="post" id="depositForm">
     {% csrf_token %}
     <div class="mb-3">
         <label for="amount" class="form-label">Amount (KES)</label>
         <input type="number" step="0.01" min="20" name="amount" id="amount" class="form-control" required>
     </div>
-    <button type="submit" class="btn btn-primary">Proceed</button>
+    <button type="submit" class="btn btn-success btn-lg w-100">Deposit Now</button>
 </form>
+
+<script>
+    document.querySelectorAll('.quick-amount').forEach(btn => {
+        btn.addEventListener('click', function() {
+            document.getElementById('amount').value = this.dataset.amount;
+        });
+    });
+</script>
 {% endblock %}

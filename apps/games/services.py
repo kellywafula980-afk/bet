@@ -2,10 +2,9 @@ import random
 from decimal import Decimal
 from django.core.exceptions import ValidationError
 from apps.wallet.services import WalletService
-from .models import WheelSpin
+from .models import WheelSpin, GameSetting
 
 class WheelService:
-    # Demo mode: very player-friendly, high chance of big wins
     DEMO_MULTIPLIERS = [
         (0.0, 10),
         (0.5, 10),
@@ -18,7 +17,6 @@ class WheelService:
         (50.0, 6),
     ]
 
-    # Live mode: house edge ~4.1%
     LIVE_MULTIPLIERS = [
         (0.0, 55),
         (0.5, 10),
@@ -36,22 +34,37 @@ class WheelService:
         if bet_amount <= 0:
             raise ValidationError("Bet must be positive")
 
+        setting = GameSetting.objects.first()
+
         if demo_mode:
-            # Use demo multipliers
-            multipliers, weights = zip(*cls.DEMO_MULTIPLIERS)
-            # Get demo balance from session (convert to Decimal for safe arithmetic)
+            # Check for forced sequence from session (to keep track of which spin we're on)
+            # We'll store the count in the session: 'demo_spin_count'
+            spin_count = request.session.get('demo_spin_count', 0) % 3  # 0,1,2
+            forced = None
+            if spin_count == 0 and setting and setting.demo_first is not None:
+                forced = setting.demo_first
+            elif spin_count == 1 and setting and setting.demo_second is not None:
+                forced = setting.demo_second
+            elif spin_count == 2 and setting and setting.demo_third is not None:
+                forced = setting.demo_third
+
+            if forced is not None:
+                multiplier = Decimal(str(forced))
+            else:
+                multipliers, weights = zip(*cls.DEMO_MULTIPLIERS)
+                multiplier = random.choices(multipliers, weights=weights, k=1)[0]
+                multiplier = Decimal(str(multiplier))
+
+            # Increment spin count for next time (cycle through 0,1,2)
+            request.session['demo_spin_count'] = (request.session.get('demo_spin_count', 0) + 1) % 3
+
             demo_balance = Decimal(str(request.session.get('demo_balance', 1000)))
             if demo_balance < bet_amount:
                 raise ValidationError("Insufficient demo balance")
-            # Deduct bet
             demo_balance -= bet_amount
-            # Choose multiplier
-            multiplier = random.choices(multipliers, weights=weights, k=1)[0]
-            multiplier = Decimal(str(multiplier))
             win_amount = bet_amount * multiplier
             if win_amount > 0:
                 demo_balance += win_amount
-            # Save back to session as float (or string)
             request.session['demo_balance'] = float(demo_balance)
             return {
                 'multiplier': float(multiplier),
@@ -60,15 +73,19 @@ class WheelService:
                 'is_demo': True,
             }
         else:
-            # Live mode: use real wallet
+            forced = setting.live_forced_multiplier if setting else None
+            if forced is not None:
+                multiplier = Decimal(str(forced))
+            else:
+                multipliers, weights = zip(*cls.LIVE_MULTIPLIERS)
+                multiplier = random.choices(multipliers, weights=weights, k=1)[0]
+                multiplier = Decimal(str(multiplier))
+
             wallet = user.wallet
             if wallet.balance < bet_amount:
                 raise ValidationError("Insufficient balance")
-            multipliers, weights = zip(*cls.LIVE_MULTIPLIERS)
-            multiplier = random.choices(multipliers, weights=weights, k=1)[0]
-            multiplier = Decimal(str(multiplier))
-            win_amount = bet_amount * multiplier
 
+            win_amount = bet_amount * multiplier
             WalletService.debit(user, bet_amount, "Wheel spin (live)")
             if win_amount > 0:
                 WalletService.credit(

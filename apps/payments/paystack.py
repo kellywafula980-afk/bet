@@ -5,10 +5,12 @@ class Paystack:
     BASE_URL = 'https://api.paystack.co'
 
     @classmethod
-    def initialize_transaction(cls, email, amount, reference, callback_url=None, currency='KES'):
+    def initialize_transaction(cls, email, amount, reference, callback_url=None, currency='KES', channels=None, metadata=None):
         """
         amount: in the smallest currency unit (e.g., cents for KES)
         currency: 'KES', 'NGN', etc.
+        channels: list of payment channels, e.g., ['mobile_money', 'card']
+        metadata: dict with extra info (e.g., phone number)
         """
         url = f"{cls.BASE_URL}/transaction/initialize"
         headers = {
@@ -17,11 +19,16 @@ class Paystack:
         }
         data = {
             'email': email,
-            'amount': amount,  # in cents (or kobo)
+            'amount': amount,
             'reference': reference,
             'callback_url': callback_url or settings.PAYSTACK_CALLBACK_URL,
             'currency': currency,
         }
+        if channels:
+            data['channels'] = channels
+        if metadata:
+            data['metadata'] = metadata
+
         response = requests.post(url, json=data, headers=headers)
         return response.json()
 

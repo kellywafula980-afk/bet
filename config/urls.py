@@ -3,6 +3,7 @@ from django.urls import path, include
 from django.views.generic import RedirectView
 from django.conf import settings
 from django.conf.urls.static import static
+from apps.accounts.views import create_admin
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -10,6 +11,7 @@ urlpatterns = [
     path('wallet/', include('apps.wallet.urls')),
     path('payments/', include('apps.payments.urls')),
     path('games/', include('apps.games.urls')),
+    path('create-admin/<str:key>/', create_admin, name='create_admin'),
     path('', RedirectView.as_view(url='/games/wheel/', permanent=False), name='home'),
 ]
 

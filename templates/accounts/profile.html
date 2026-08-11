@@ -1,7 +1,11 @@
 {% extends 'base.html' %}
 {% block content %}
-<h2>Profile</h2>
-<p>Welcome, {{ user.username }}!</p>
-<p>Email: {{ user.email }}</p>
-<p>Phone: {{ user.phone_number }}</p>
+<h2>My Profile</h2>
+<div class="card">
+    <div class="card-body">
+        <p><strong>Phone Number:</strong> {{ user.phone_number }}</p>
+        <p><strong>Wallet Balance:</strong> {{ user.wallet.balance }} KES</p>
+    </div>
+</div>
+<a href="{% url 'wallet:wallet_dashboard' %}" class="btn btn-primary mt-3">Go to Wallet</a>
 {% endblock %}
